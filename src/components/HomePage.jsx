@@ -45,16 +45,9 @@ export default function HomePage({ setPage, scores, overall }) {
           {
             id: "typing", icon: "🗺️", cls: "icon-pink",
             title: "Travel Typing",
-            desc: "5 minute timed sentence challenge",
+            desc: "Timed sentence challenge — 3 or 5 minutes",
             badge: scores.typing.sessions > 0 ? `Best: ${scores.typing.best}pts` : null,
             badgeCls: "badge-pink",
-          },
-          {
-            id: "essay", icon: "✍️", cls: "icon-gold",
-            title: "Essay Coach",
-            desc: "IELTS Task 1 & 2 with AI band scoring",
-            badge: scores.essay.avgBand > 0 ? `Avg Band ${scores.essay.avgBand.toFixed(1)}` : null,
-            badgeCls: "badge-gold",
           },
           {
             id: "words", icon: "📖", cls: "icon-purple",

@@ -1,8 +1,61 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Loading } from "./shared.jsx";
 import { callAI, parseJSON } from "../api/gemini.js";
-import { WORD_CHALLENGE_SYSTEM, WORD_EXAMPLE_SYSTEM } from "../data/prompts.js";
+import { WORD_CHALLENGE_SYSTEM, WORD_EXAMPLE_SYSTEM, TRANSLATE_SYSTEM } from "../data/prompts.js";
 import { getRandomWord, getChineseDef } from "../data/words.js";
+
+const MAX_EXAMPLES = 3;
+
+// ── TRANSLATION POPUP ──────────────────────────────────────
+function TranslationPopup({ text, onClose, settings }) {
+  const [translation, setTranslation] = useState("");
+  const [loading, setLoading]         = useState(false);
+
+  useEffect(() => {
+    if (!settings.chineseMode || !text) return;
+    setLoading(true);
+    callAI(TRANSLATE_SYSTEM, text)
+      .then(resp => setTranslation(resp.trim()))
+      .catch(() => setTranslation("（翻譯失敗）"))
+      .finally(() => setLoading(false));
+  }, [text]);
+
+  if (!settings.chineseMode) return null;
+
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position:"fixed", inset:0, zIndex:100,
+        display:"flex", alignItems:"flex-end", justifyContent:"center",
+        background:"rgba(0,0,0,0.5)", backdropFilter:"blur(4px)",
+        padding:"0 16px 40px",
+      }}
+    >
+      <div
+        onClick={e => e.stopPropagation()}
+        style={{
+          background:"#1a1a2e", border:"1px solid rgba(255,215,0,0.3)",
+          borderRadius:16, padding:"20px", width:"100%", maxWidth:440,
+          animation:"fadeUp 0.25s ease",
+        }}
+      >
+        <p className="label mb-sm" style={{ color:"var(--gold)" }}>繁體中文翻譯</p>
+        <p style={{ fontStyle:"italic", color:"var(--off-white)", fontSize:"0.95rem",
+          marginBottom:12, lineHeight:1.65 }}>"{text}"</p>
+        <div style={{ borderTop:"1px solid rgba(255,215,0,0.15)", paddingTop:12 }}>
+          {loading
+            ? <div className="flex items-center gap-sm"><Loading/><p className="body-sm">翻譯中...</p></div>
+            : <p style={{ color:"var(--gold)", fontSize:"1rem", lineHeight:1.65 }}>{translation}</p>
+          }
+        </div>
+        <p className="body-sm mt-sm text-center" style={{ color:"var(--grey2)", fontSize:"0.78rem" }}>
+          點擊任意處關閉
+        </p>
+      </div>
+    </div>
+  );
+}
 
 export default function WordChallenge({ setPage, scores, saveScores, settings }) {
   const [phase, setPhase]                   = useState("intro");
@@ -14,11 +67,15 @@ export default function WordChallenge({ setPage, scores, saveScores, settings })
   const [loadingExample, setLoadingExample] = useState(false);
   const [result, setResult]                 = useState(null);
   const [example, setExample]               = useState(null);
-  const [exampleUsed, setExampleUsed]       = useState(false);
+  const [examplesUsed, setExamplesUsed]     = useState(0); // 0-3
   const [sessionScore, setSessionScore]     = useState(0);
   const [count, setCount]                   = useState(0);
   const [skipped, setSkipped]               = useState(0);
   const [error, setError]                   = useState("");
+  const [popup, setPopup]                   = useState(null);
+
+  const examplesLeft = MAX_EXAMPLES - examplesUsed;
+  const canRequestExample = phase === "feedback" && examplesLeft > 0 && !loadingExample;
 
   const nextWord = (wasSkipped = false) => {
     if (wasSkipped && currentWord) {
@@ -28,7 +85,7 @@ export default function WordChallenge({ setPage, scores, saveScores, settings })
           ...scores.word,
           skipped: (scores.word.skipped || 0) + 1,
           flagged: [...(scores.word.flagged || []),
-            { word: currentWord.word, reason:"skipped" }]
+            { word: currentWord.word, reason:"skipped" }],
         }
       });
       setSkipped(s => s + 1);
@@ -39,7 +96,7 @@ export default function WordChallenge({ setPage, scores, saveScores, settings })
     setSubmitted("");
     setResult(null);
     setExample(null);
-    setExampleUsed(false);
+    setExamplesUsed(0);
     setError("");
     setPhase("playing");
   };
@@ -57,7 +114,7 @@ export default function WordChallenge({ setPage, scores, saveScores, settings })
         `Word: "${currentWord.word}"\nUser's sentence: "${userSentence}"`
       );
       const parsed = parseJSON(resp);
-      if (typeof parsed.score !== "number") throw new Error("Invalid response format");
+      if (typeof parsed.score !== "number") throw new Error("Invalid response");
 
       setResult(parsed);
       setSessionScore(s => s + parsed.score);
@@ -74,30 +131,33 @@ export default function WordChallenge({ setPage, scores, saveScores, settings })
           flagged: needsHelp
             ? [...(scores.word.flagged || []),
                { word: currentWord.word, reason:"low_score", score: parsed.score }]
-            : (scores.word.flagged || [])
+            : (scores.word.flagged || []),
         }
       });
       setPhase("feedback");
     } catch (e) {
-      // Do NOT save on error
-      setError("Scoring failed — check your API key. Progress was not saved for this word.");
+      setError("Scoring failed — progress not saved. Please try again.");
     } finally {
       setLoading(false);
     }
   };
 
   const requestExample = async () => {
-    if (exampleUsed || loadingExample || !result) return;
-    setExampleUsed(true);
+    if (!canRequestExample) return;
+    setExamplesUsed(n => n + 1);
     setLoadingExample(true);
+    setExample(null);
+
+    // Flag example requested
     saveScores({
       ...scores,
       word: {
         ...scores.word,
         flagged: [...(scores.word.flagged || []),
-          { word: currentWord.word, reason:"requested_example" }]
+          { word: currentWord.word, reason:"requested_example" }],
       }
     });
+
     try {
       const resp = await callAI(
         WORD_EXAMPLE_SYSTEM,
@@ -105,6 +165,8 @@ export default function WordChallenge({ setPage, scores, saveScores, settings })
       );
       setExample(parseJSON(resp));
     } catch (e) {
+      // Don't count failed attempt against the limit — restore one use
+      setExamplesUsed(n => Math.max(0, n - 1));
       setExample({ exampleSentence:"Example unavailable — please try again.", explanation:"" });
     } finally {
       setLoadingExample(false);
@@ -132,8 +194,9 @@ export default function WordChallenge({ setPage, scores, saveScores, settings })
           <p className="label mb-sm">How it works</p>
           <p className="body-sm mb-xs">⭐ Gold star = advanced word (20% chance)</p>
           <p className="body-sm mb-xs">🇹🇼 Tap word → Chinese definition</p>
-          <p className="body-sm mb-xs">💡 Show Example — once per word, after scoring</p>
-          <p className="body-sm">⏭ Skip any word — no score penalty</p>
+          <p className="body-sm mb-xs">💡 Show Example — up to 3 times per word</p>
+          <p className="body-sm mb-xs">⏭ Skip any word — no score penalty</p>
+          {settings.chineseMode && <p className="body-sm mt-sm text-gold">點擊任何英文句子可查看翻譯</p>}
         </div>
         <button className="btn btn-primary" style={{ minWidth:220 }} onClick={() => nextWord(false)}>
           Start →
@@ -147,7 +210,6 @@ export default function WordChallenge({ setPage, scores, saveScores, settings })
     <div className="page">
       {/* STICKY HEADER */}
       <div className="sticky-header">
-        {/* Row 1 — back + stats */}
         <div className="flex items-center justify-between" style={{ marginBottom:10 }}>
           <button className="back-btn" style={{ padding:"7px 12px", fontSize:"0.8rem" }}
             onClick={() => setPage("home")}>← Exit</button>
@@ -175,25 +237,28 @@ export default function WordChallenge({ setPage, scores, saveScores, settings })
           </div>
         </div>
 
-        {/* Row 2 — action buttons */}
         <div className="flex gap-sm">
           <button className="btn btn-primary btn-sm" style={{ flex:1 }}
             onClick={() => phase === "playing" ? nextWord(true) : nextWord(false)}
             disabled={loading}>
             {phase === "playing" ? "Skip ⏭" : "Next Word →"}
           </button>
-          <button className="btn btn-secondary btn-sm" style={{
-            flex:1,
-            opacity: (phase === "feedback" && !exampleUsed) ? 1 : 0.35,
-            cursor:  (phase === "feedback" && !exampleUsed) ? "pointer" : "not-allowed",
-          }}
+          <button
+            className="btn btn-secondary btn-sm"
+            style={{
+              flex:1,
+              opacity: canRequestExample ? 1 : 0.35,
+              cursor:  canRequestExample ? "pointer" : "not-allowed",
+            }}
             onClick={requestExample}
-            disabled={phase !== "feedback" || exampleUsed || loadingExample}>
+            disabled={!canRequestExample}>
             {loadingExample
               ? <><Loading/> Loading</>
-              : exampleUsed
-              ? "✓ Example shown"
-              : "💡 Show Example"}
+              : phase !== "feedback"
+              ? "💡 Show Example"
+              : examplesLeft === 0
+              ? "✓ No attempts left"
+              : `💡 Example (${examplesLeft} left)`}
           </button>
         </div>
       </div>
@@ -224,7 +289,7 @@ export default function WordChallenge({ setPage, scores, saveScores, settings })
           </div>
         )}
 
-        {/* Input — playing phase only */}
+        {/* Input */}
         {phase === "playing" && (
           <>
             <p className="label mb-sm">Write a sentence using this word:</p>
@@ -242,7 +307,7 @@ export default function WordChallenge({ setPage, scores, saveScores, settings })
           </>
         )}
 
-        {/* Feedback — after submission */}
+        {/* Feedback */}
         {phase === "feedback" && result && (
           <>
             <div className={`fb mb-md ${isGood ? "fb-good" : isMid ? "fb-neutral" : "fb-bad"}`}>
@@ -252,50 +317,72 @@ export default function WordChallenge({ setPage, scores, saveScores, settings })
                   {result.score}/10
                 </span>
               </div>
-              <p style={{ fontStyle:"italic", color:"var(--off-white)", fontSize:"0.95rem", marginBottom:10, lineHeight:1.65 }}>
+              <p
+                style={{
+                  fontStyle:"italic", color:"var(--off-white)", fontSize:"0.95rem",
+                  marginBottom:10, lineHeight:1.65,
+                  cursor: settings.chineseMode ? "pointer" : "default",
+                  textDecoration: settings.chineseMode ? "underline dotted rgba(255,215,0,0.4)" : "none",
+                }}
+                onClick={() => settings.chineseMode && setPopup(submittedSentence)}>
                 "{submittedSentence}"
               </p>
               <span className={`badge ${result.wordUsedCorrectly ? "badge-green" : "badge-red"}`}
                 style={{ display:"inline-flex", marginBottom:10 }}>
                 {result.wordUsedCorrectly ? "✓ Word used correctly" : "✗ Incorrect word usage"}
               </span>
-              <p className="body-sm">{result.feedback}</p>
+              <p className="body-sm"
+                style={{ cursor: settings.chineseMode ? "pointer" : "default" }}
+                onClick={() => settings.chineseMode && setPopup(result.feedback)}>
+                {result.feedback}
+              </p>
               {settings.chineseMode && (
-                <p style={{
-                  color:"var(--gold)", fontSize:"0.84rem",
-                  marginTop:10, paddingTop:10,
-                  borderTop:"1px solid rgba(255,215,0,0.12)"
-                }}>
-                  {result.wordUsedCorrectly
-                    ? "詞語使用正確"
-                    : "詞語使用不正確，請重新學習此詞"}
+                <p style={{ color:"rgba(255,215,0,0.6)", fontSize:"0.75rem", marginTop:8 }}>
+                  點擊句子或反饋查看翻譯
                 </p>
               )}
             </div>
 
-            {/* AI Example — shown only after button tapped */}
+            {/* Example */}
             {(loadingExample || example) && (
               <div className="fb fb-example mb-md" style={{ animation:"fadeUp 0.35s ease" }}>
-                <p className="label mb-sm" style={{ color:"#c4b5fd" }}>💡 Example Answer</p>
+                <p className="label mb-sm" style={{ color:"#c4b5fd" }}>
+                  💡 Example Answer
+                  {examplesUsed > 0 && (
+                    <span style={{ marginLeft:8, fontSize:"0.68rem", color:"var(--grey)" }}>
+                      ({examplesUsed}/{MAX_EXAMPLES} used)
+                    </span>
+                  )}
+                </p>
                 {loadingExample ? (
                   <div className="flex items-center gap-sm">
                     <Loading/><p className="body-sm">Generating example...</p>
                   </div>
                 ) : (
                   <>
-                    <p style={{
-                      fontStyle:"italic", color:"var(--white)",
-                      fontSize:"1rem", marginBottom:10, lineHeight:1.7
-                    }}>"{example.exampleSentence}"</p>
+                    <p
+                      style={{
+                        fontStyle:"italic", color:"var(--white)",
+                        fontSize:"1rem", marginBottom:10, lineHeight:1.7,
+                        cursor: settings.chineseMode ? "pointer" : "default",
+                        textDecoration: settings.chineseMode ? "underline dotted rgba(255,215,0,0.4)" : "none",
+                      }}
+                      onClick={() => settings.chineseMode && setPopup(example.exampleSentence)}>
+                      "{example.exampleSentence}"
+                    </p>
                     {example.explanation && (
-                      <p className="body-sm" style={{
-                        borderTop:"1px solid rgba(139,92,246,0.22)",
-                        paddingTop:10
-                      }}>{example.explanation}</p>
+                      <p className="body-sm"
+                        style={{
+                          borderTop:"1px solid rgba(139,92,246,0.22)", paddingTop:10,
+                          cursor: settings.chineseMode ? "pointer" : "default",
+                        }}
+                        onClick={() => settings.chineseMode && setPopup(example.explanation)}>
+                        {example.explanation}
+                      </p>
                     )}
                     {settings.chineseMode && (
-                      <p style={{ color:"var(--gold)", fontSize:"0.84rem", marginTop:8 }}>
-                        以上為示範答案，僅供參考
+                      <p style={{ color:"rgba(255,215,0,0.6)", fontSize:"0.75rem", marginTop:8 }}>
+                        以上為示範答案，點擊查看翻譯
                       </p>
                     )}
                   </>
@@ -305,6 +392,8 @@ export default function WordChallenge({ setPage, scores, saveScores, settings })
           </>
         )}
       </div>
+
+      {popup && <TranslationPopup text={popup} onClose={() => setPopup(null)} settings={settings}/>}
     </div>
   );
 }

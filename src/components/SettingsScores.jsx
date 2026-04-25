@@ -16,7 +16,7 @@ export function SettingsPage({ setPage, settings, saveSetting }) {
             <p style={{ fontWeight:600, color:"var(--white)", marginBottom:4 }}>
               Traditional Chinese · 繁體中文
             </p>
-            <p className="body-sm">Show Chinese descriptions and feedback</p>
+            <p className="body-sm">Show Chinese descriptions and translation popups</p>
           </div>
           <div
             className={`toggle ${settings.chineseMode ? "on" : ""}`}
@@ -31,7 +31,7 @@ export function SettingsPage({ setPage, settings, saveSetting }) {
 
         <div className="card mb-md">
           <p style={{ fontWeight:600, color:"var(--white)", marginBottom:4 }}>IELTS English Coach</p>
-          <p className="body-sm">Powered by Gemini 2.0 Flash · 1000 IELTS vocabulary words</p>
+          <p className="body-sm">Powered by Gemini AI · 1000 IELTS vocabulary words</p>
           <p className="body-sm mt-sm">Optimised for IELTS academic preparation</p>
         </div>
 
@@ -87,32 +87,6 @@ export function ScoresPage({ setPage, scores, overall }) {
             <p className="body-sm">Last Score</p>
             <p className="body-sm text-white">{scores.typing.last} pts</p>
           </div>
-        </div>
-
-        {/* Essay */}
-        <div className="card card-glow mb-md">
-          <div className="flex items-center justify-between mb-md">
-            <p style={{ fontWeight:600, color:"var(--white)" }}>✍️ Essay Coach</p>
-            <span className="badge badge-gold">{scores.essay.sessions.length} essays</span>
-          </div>
-          {scores.essay.sessions.length > 0 ? (
-            <>
-              <div className="flex justify-between mb-sm">
-                <p className="body-sm">Average Band</p>
-                <p className="body-sm text-gold">Band {scores.essay.avgBand.toFixed(1)}</p>
-              </div>
-              <div className="divider" style={{ margin:"10px 0" }}/>
-              <p className="label mb-sm">Recent Essays</p>
-              {scores.essay.sessions.slice(-4).reverse().map((s, i) => (
-                <div key={i} className="flex items-center justify-between mb-sm">
-                  <p className="body-sm">{s.type} · {s.date}</p>
-                  <span className="badge badge-gold" style={{ padding:"2px 10px" }}>Band {s.overall}</span>
-                </div>
-              ))}
-            </>
-          ) : (
-            <p className="body-sm">No essays submitted yet</p>
-          )}
         </div>
 
         {/* Word */}

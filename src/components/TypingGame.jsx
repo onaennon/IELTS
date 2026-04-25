@@ -1,31 +1,85 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { CircularTimer, cities, Loading } from "./shared.jsx";
 import { callAI, parseJSON } from "../api/gemini.js";
-import { TRAVEL_TYPING_SYSTEM } from "../data/prompts.js";
+import { TRAVEL_TYPING_SYSTEM, TRANSLATE_SYSTEM } from "../data/prompts.js";
+
+// ── TRANSLATION POPUP ──────────────────────────────────────
+function TranslationPopup({ text, onClose, settings }) {
+  const [translation, setTranslation] = useState("");
+  const [loading, setLoading]         = useState(false);
+
+  useEffect(() => {
+    if (!settings.chineseMode || !text) return;
+    setLoading(true);
+    setTranslation("");
+    callAI(TRANSLATE_SYSTEM, text)
+      .then(resp => setTranslation(resp.trim()))
+      .catch(() => setTranslation("（翻譯失敗）"))
+      .finally(() => setLoading(false));
+  }, [text, settings.chineseMode]);
+
+  if (!settings.chineseMode) return null;
+
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position:"fixed", inset:0, zIndex:100,
+        display:"flex", alignItems:"flex-end", justifyContent:"center",
+        background:"rgba(0,0,0,0.5)", backdropFilter:"blur(4px)",
+        padding:"0 16px 40px",
+      }}
+    >
+      <div
+        onClick={e => e.stopPropagation()}
+        style={{
+          background:"#1a1a2e", border:"1px solid rgba(255,215,0,0.3)",
+          borderRadius:16, padding:"20px", width:"100%", maxWidth:440,
+          animation:"fadeUp 0.25s ease",
+        }}
+      >
+        <p className="label mb-sm" style={{ color:"var(--gold)" }}>繁體中文翻譯</p>
+        <p style={{ fontStyle:"italic", color:"var(--off-white)", fontSize:"0.95rem",
+          marginBottom:12, lineHeight:1.65 }}>"{text}"</p>
+        <div style={{ borderTop:"1px solid rgba(255,215,0,0.15)", paddingTop:12 }}>
+          {loading
+            ? <div className="flex items-center gap-sm"><Loading/><p className="body-sm">翻譯中...</p></div>
+            : <p style={{ color:"var(--gold)", fontSize:"1rem", lineHeight:1.65 }}>{translation}</p>
+          }
+        </div>
+        <p className="body-sm mt-sm text-center" style={{ color:"var(--grey2)", fontSize:"0.78rem" }}>
+          點擊任意處關閉
+        </p>
+      </div>
+    </div>
+  );
+}
 
 export default function TypingGame({ setPage, scores, saveScores, settings }) {
-  const DURATION = 300;
-  const [phase, setPhase]         = useState("intro");
-  const [theme, setTheme]         = useState("");
-  const [sentence, setSentence]   = useState("");
-  const [timeLeft, setTimeLeft]   = useState(DURATION);
+  const [phase, setPhase]           = useState("intro");
+  const [duration, setDuration]     = useState(null); // chosen by user: 180 or 300
+  const [theme, setTheme]           = useState("");
+  const [sentence, setSentence]     = useState("");
+  const [timeLeft, setTimeLeft]     = useState(0);
   const [totalScore, setTotalScore] = useState(0);
-  const [history, setHistory]     = useState([]);
-  const [loading, setLoading]     = useState(false);
-  const [feedback, setFeedback]   = useState(null);
-  const [aiHistory, setAiHistory] = useState([]);
-  const [error, setError]         = useState("");
+  const [history, setHistory]       = useState([]);
+  const [loading, setLoading]       = useState(false);
+  const [feedback, setFeedback]     = useState(null);
+  const [aiHistory, setAiHistory]   = useState([]);
+  const [error, setError]           = useState("");
+  const [popup, setPopup]           = useState(null); // text to translate
 
-  const intervalRef  = useRef(null);
-  const inputRef     = useRef(null);
-  const sentenceRef  = useRef("");
-  const historyRef   = useRef([]);
-  const totalRef     = useRef(0);
+  const intervalRef = useRef(null);
+  const inputRef    = useRef(null);
+  const sentenceRef = useRef("");
+  const historyRef  = useRef([]);
+  const totalRef    = useRef(0);
+  const durationRef = useRef(null);
 
-  // Keep refs in sync for use inside timer callback
   useEffect(() => { sentenceRef.current = sentence; }, [sentence]);
   useEffect(() => { historyRef.current = history; }, [history]);
   useEffect(() => { totalRef.current = totalScore; }, [totalScore]);
+  useEffect(() => { durationRef.current = duration; }, [duration]);
 
   const submitSentence = useCallback(async (forcedText) => {
     const text = (forcedText ?? sentenceRef.current).trim();
@@ -43,18 +97,18 @@ export default function TypingGame({ setPage, scores, saveScores, settings }) {
       setTotalScore(s => { const next = s + pts; totalRef.current = next; return next; });
       setFeedback({ score: pts, feedback: parsed.feedback });
       setAiHistory(h => [...h,
-        { role:"user", content: text },
-        { role:"model", content: resp }
+        { role:"user",  content: text },
+        { role:"model", content: resp },
       ]);
     } catch (e) {
-      setError("Scoring failed — check your API key.");
+      setError("Scoring failed — please try again.");
     } finally {
       setLoading(false);
       inputRef.current?.focus();
     }
   }, [aiHistory]);
 
-  const startRound = async () => {
+  const startRound = async (chosenDuration) => {
     setPhase("loading");
     setError("");
     try {
@@ -63,19 +117,16 @@ export default function TypingGame({ setPage, scores, saveScores, settings }) {
       setTheme(parsed.theme || "Describe your journey through a famous European city.");
       setAiHistory([
         { role:"user",  content:"START_ROUND" },
-        { role:"model", content: resp }
+        { role:"model", content: resp },
       ]);
       setPhase("playing");
-      setTimeLeft(DURATION);
-      setTotalScore(0);
-      totalRef.current = 0;
-      setHistory([]);
-      historyRef.current = [];
+      setTimeLeft(chosenDuration);
+      setTotalScore(0);  totalRef.current = 0;
+      setHistory([]);    historyRef.current = [];
       setFeedback(null);
-      setSentence("");
-      sentenceRef.current = "";
+      setSentence("");   sentenceRef.current = "";
     } catch (e) {
-      setError("Could not start round. Check your API key.");
+      setError("Could not start round — please try again.");
       setPhase("intro");
     }
   };
@@ -113,13 +164,13 @@ export default function TypingGame({ setPage, scores, saveScores, settings }) {
       },
       cityScores: {
         ...scores.cityScores,
-        [city]: (scores.cityScores[city] || 0) + totalRef.current
-      }
+        [city]: (scores.cityScores[city] || 0) + totalRef.current,
+      },
     });
     setPage("home");
   };
 
-  // ── INTRO / LOADING ──
+  // ── INTRO — timer selection ──
   if (phase === "intro" || phase === "loading") return (
     <div className="page">
       <div className="sticky-header flex items-center justify-between">
@@ -129,10 +180,34 @@ export default function TypingGame({ setPage, scores, saveScores, settings }) {
       </div>
       <div className="scroll-area text-center">
         <p style={{ fontSize:"3.5rem", marginBottom:20 }}>🗺️</p>
-        <h2 className="display display-lg mb-md">5 Minute Challenge</h2>
-        <p className="body-md mb-lg" style={{ maxWidth:320, margin:"0 auto 20px" }}>
+        <h2 className="display display-lg mb-sm">Timed Challenge</h2>
+        <p className="body-md mb-lg" style={{ maxWidth:320, margin:"0 auto 16px" }}>
           The AI gives you a European travel theme. Write as many correct sentences as possible before time runs out.
         </p>
+
+        {/* Timer selection */}
+        <p className="label mb-sm">Choose your time limit</p>
+        <div className="flex gap-md mb-lg" style={{ justifyContent:"center" }}>
+          {[
+            { val:180, label:"3 Minutes", desc:"Quick practice" },
+            { val:300, label:"5 Minutes", desc:"Full session" },
+          ].map(opt => (
+            <div key={opt.val}
+              onClick={() => setDuration(opt.val)}
+              style={{
+                background: duration===opt.val ? "rgba(255,107,157,0.12)" : "var(--card)",
+                border: `1px solid ${duration===opt.val ? "var(--pink)" : "var(--card-border)"}`,
+                borderRadius:16, padding:"16px 24px", cursor:"pointer",
+                transition:"var(--transition)", minWidth:130,
+              }}>
+              <p style={{ fontFamily:"var(--font-display)", fontSize:"1.6rem",
+                fontWeight:300, color: duration===opt.val ? "var(--pink)" : "var(--white)",
+                lineHeight:1, marginBottom:4 }}>{opt.label}</p>
+              <p className="body-sm">{opt.desc}</p>
+            </div>
+          ))}
+        </div>
+
         <div className="card mb-lg" style={{ textAlign:"left", maxWidth:340, margin:"0 auto 20px" }}>
           <p className="label mb-sm">Scoring Rules</p>
           <p className="body-sm mb-xs">• Perfect, complex sentence = 9–10 pts</p>
@@ -141,13 +216,17 @@ export default function TypingGame({ setPage, scores, saveScores, settings }) {
           <p className="body-sm mb-xs">• Simple sentences = max 5 pts</p>
           <p className="body-sm">• Nothing typed at timeout = not counted</p>
         </div>
+
         {error && <p className="error-text mb-md">{error}</p>}
+
         {phase === "loading" ? (
           <div className="flex items-center justify-center gap-md">
             <Loading/><p className="body-sm">Getting your theme...</p>
           </div>
         ) : (
-          <button className="btn btn-primary" style={{ minWidth:220 }} onClick={startRound}>
+          <button className="btn btn-primary" style={{ minWidth:220 }}
+            disabled={!duration}
+            onClick={() => startRound(duration)}>
             Start Round →
           </button>
         )}
@@ -161,35 +240,46 @@ export default function TypingGame({ setPage, scores, saveScores, settings }) {
       <div className="sticky-header flex items-center justify-between">
         <button className="back-btn" onClick={saveAndExit}>← Save & Exit</button>
         <h2 className="display display-md">Results</h2>
-        <button className="back-btn" onClick={() => setPhase("intro")}>Play Again</button>
+        <button className="back-btn" onClick={() => { setDuration(null); setPhase("intro"); }}>Play Again</button>
       </div>
       <div className="scroll-area text-center">
         <p className="label mb-sm">Total Score</p>
         <div style={{
           fontFamily:"var(--font-display)", fontSize:"5rem", fontWeight:300, lineHeight:1, marginBottom:8,
           background:"linear-gradient(135deg,#ff6b9d,#ffd700)",
-          WebkitBackgroundClip:"text", WebkitTextFillColor:"transparent", backgroundClip:"text"
+          WebkitBackgroundClip:"text", WebkitTextFillColor:"transparent", backgroundClip:"text",
         }}>{totalScore}</div>
         <p className="body-sm mb-lg">{history.length} sentence{history.length !== 1 ? "s" : ""} scored</p>
 
         {history.length === 0 ? (
-          <div className="card mb-lg">
-            <p className="body-md">No sentences were scored this session.</p>
-          </div>
+          <div className="card mb-lg"><p className="body-md">No sentences were scored this session.</p></div>
         ) : (
           <div style={{ textAlign:"left" }} className="mb-lg">
-            <p className="label mb-sm">Breakdown</p>
+            <p className="label mb-sm">
+              Breakdown
+              {settings.chineseMode && <span style={{ color:"var(--gold)", marginLeft:8, fontSize:"0.7rem" }}>點擊句子查看翻譯</span>}
+            </p>
             {history.map((h,i) => (
               <div key={i} className="card mb-sm" style={{ padding:"13px 15px" }}>
                 <div className="flex items-center justify-between mb-xs">
-                  <p className="body-sm" style={{ flex:1, marginRight:8, fontStyle:"italic", color:"var(--off-white)" }}>
-                    "{h.sentence}"
-                  </p>
+                  <p
+                    className="body-sm"
+                    style={{
+                      flex:1, marginRight:8, fontStyle:"italic", color:"var(--off-white)",
+                      cursor: settings.chineseMode ? "pointer" : "default",
+                      textDecoration: settings.chineseMode ? "underline dotted rgba(255,215,0,0.4)" : "none",
+                    }}
+                    onClick={() => settings.chineseMode && setPopup(h.sentence)}
+                  >"{h.sentence}"</p>
                   <span className={`badge ${h.score>=7?"badge-green":h.score>=4?"badge-gold":"badge-red"}`}>
                     {h.score}/10
                   </span>
                 </div>
-                <p className="body-sm">{h.feedback}</p>
+                <p className="body-sm"
+                  style={{ cursor: settings.chineseMode ? "pointer" : "default" }}
+                  onClick={() => settings.chineseMode && setPopup(h.feedback)}>
+                  {h.feedback}
+                </p>
               </div>
             ))}
           </div>
@@ -197,9 +287,11 @@ export default function TypingGame({ setPage, scores, saveScores, settings }) {
 
         <div className="flex gap-md">
           <button className="btn btn-secondary" style={{ flex:1 }} onClick={saveAndExit}>Save & Exit</button>
-          <button className="btn btn-primary"   style={{ flex:1 }} onClick={() => setPhase("intro")}>Play Again</button>
+          <button className="btn btn-primary" style={{ flex:1 }} onClick={() => { setDuration(null); setPhase("intro"); }}>Play Again</button>
         </div>
       </div>
+
+      {popup && <TranslationPopup text={popup} onClose={() => setPopup(null)} settings={settings}/>}
     </div>
   );
 
@@ -212,13 +304,11 @@ export default function TypingGame({ setPage, scores, saveScores, settings }) {
             clearInterval(intervalRef.current);
             setPhase("results");
           }}>⏹ End</button>
-          <CircularTimer seconds={timeLeft} total={DURATION}/>
+          <CircularTimer seconds={timeLeft} total={duration || 300}/>
           <div style={{ textAlign:"right" }}>
             <p className="label" style={{ fontSize:"0.68rem" }}>Score</p>
-            <p style={{
-              fontFamily:"var(--font-display)", fontSize:"1.8rem",
-              fontWeight:300, color:"var(--gold)", lineHeight:1
-            }}>{totalScore}</p>
+            <p style={{ fontFamily:"var(--font-display)", fontSize:"1.8rem",
+              fontWeight:300, color:"var(--gold)", lineHeight:1 }}>{totalScore}</p>
           </div>
         </div>
       </div>
@@ -226,9 +316,19 @@ export default function TypingGame({ setPage, scores, saveScores, settings }) {
       <div className="scroll-area">
         <div className="card mb-md" style={{ borderColor:"rgba(255,107,157,0.35)" }}>
           <p className="label mb-xs">✈️ Theme</p>
-          <p className="body-lg" style={{ fontStyle:"italic" }}>"{theme}"</p>
+          <p className="body-lg"
+            style={{
+              fontStyle:"italic",
+              cursor: settings.chineseMode ? "pointer" : "default",
+              textDecoration: settings.chineseMode ? "underline dotted rgba(255,215,0,0.4)" : "none",
+            }}
+            onClick={() => settings.chineseMode && setPopup(theme)}>
+            "{theme}"
+          </p>
           {settings.chineseMode && (
-            <p className="body-sm mt-sm text-gold">請根據此主題用英文造句</p>
+            <p className="body-sm mt-sm" style={{ color:"rgba(255,215,0,0.6)", fontSize:"0.78rem" }}>
+              點擊主題查看繁體中文翻譯
+            </p>
           )}
         </div>
 
@@ -242,7 +342,11 @@ export default function TypingGame({ setPage, scores, saveScores, settings }) {
                 {feedback.score}/10
               </span>
             </div>
-            <p className="body-sm">{feedback.feedback}</p>
+            <p className="body-sm"
+              style={{ cursor: settings.chineseMode ? "pointer" : "default" }}
+              onClick={() => settings.chineseMode && setPopup(feedback.feedback)}>
+              {feedback.feedback}
+            </p>
           </div>
         )}
 
@@ -266,14 +370,22 @@ export default function TypingGame({ setPage, scores, saveScores, settings }) {
 
         {history.length > 0 && (
           <div style={{ marginTop:20 }}>
-            <p className="label mb-sm">This Round · {history.length} scored</p>
+            <p className="label mb-sm">
+              This Round · {history.length} scored
+              {settings.chineseMode && <span style={{ color:"var(--gold)", marginLeft:8, fontSize:"0.68rem" }}>點擊查看翻譯</span>}
+            </p>
             {[...history].reverse().slice(0, 5).map((h, i) => (
               <div key={i} className="flex items-center justify-between mb-sm"
                 style={{ padding:"8px 0", borderBottom:"1px solid rgba(255,255,255,0.05)" }}>
-                <p className="body-sm" style={{
-                  flex:1, marginRight:8, overflow:"hidden",
-                  textOverflow:"ellipsis", whiteSpace:"nowrap", color:"var(--off-white)"
-                }}>{h.sentence}</p>
+                <p className="body-sm"
+                  style={{
+                    flex:1, marginRight:8, overflow:"hidden",
+                    textOverflow:"ellipsis", whiteSpace:"nowrap", color:"var(--off-white)",
+                    cursor: settings.chineseMode ? "pointer" : "default",
+                  }}
+                  onClick={() => settings.chineseMode && setPopup(h.sentence)}>
+                  {h.sentence}
+                </p>
                 <span className={`badge ${h.score>=7?"badge-green":h.score>=4?"badge-gold":"badge-red"}`}>
                   {h.score}
                 </span>
@@ -282,6 +394,8 @@ export default function TypingGame({ setPage, scores, saveScores, settings }) {
           </div>
         )}
       </div>
+
+      {popup && <TranslationPopup text={popup} onClose={() => setPopup(null)} settings={settings}/>}
     </div>
   );
 }

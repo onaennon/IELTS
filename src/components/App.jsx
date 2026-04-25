@@ -4,12 +4,10 @@ import "../styles/app.css";
 import HomePage from "./HomePage.jsx";
 import { SettingsPage, ScoresPage } from "./SettingsScores.jsx";
 import TypingGame from "./TypingGame.jsx";
-import EssayCoach from "./EssayCoach.jsx";
 import WordChallenge from "./WordChallenge.jsx";
 
 const DEFAULT_SCORES = {
   typing:     { best: 0, last: 0, sessions: 0 },
-  essay:      { sessions: [], avgBand: 0 },
   word:       { attempted: 0, correct: 0, totalScore: 0, skipped: 0, flagged: [] },
   cityScores: {},
 };
@@ -49,8 +47,6 @@ export default function App() {
     const parts = [];
     if (scores.typing.sessions > 0)
       parts.push(Math.min(scores.typing.best / 10, 10));
-    if (scores.essay.avgBand > 0)
-      parts.push(scores.essay.avgBand);
     if (scores.word.attempted > 0)
       parts.push(scores.word.totalScore / scores.word.attempted);
     if (!parts.length) return null;
@@ -61,19 +57,16 @@ export default function App() {
 
   return (
     <>
-      {/* Animated background orbs */}
       <div className="bg-orbs">
         <div className="orb orb1"/>
         <div className="orb orb2"/>
         <div className="orb orb3"/>
       </div>
-
       <div className="app">
         {page === "home"     && <HomePage     setPage={setPage} scores={scores} overall={overall}/>}
         {page === "settings" && <SettingsPage setPage={setPage} settings={settings} saveSetting={saveSetting}/>}
         {page === "scores"   && <ScoresPage   setPage={setPage} scores={scores} overall={overall}/>}
         {page === "typing"   && <TypingGame   {...sharedProps}/>}
-        {page === "essay"    && <EssayCoach   {...sharedProps}/>}
         {page === "words"    && <WordChallenge {...sharedProps}/>}
       </div>
     </>
