@@ -106,8 +106,7 @@ export default function WordChallenge({ setPage, scores, saveScores, settings })
     setLoading(true);
     setError("");
     const userSentence = sentence.trim();
-    setSubmitted(userSentence);
-    setSentence("");
+    // Do NOT clear the sentence yet — wait for a successful response
     try {
       const resp = await callAI(
         WORD_CHALLENGE_SYSTEM,
@@ -116,6 +115,9 @@ export default function WordChallenge({ setPage, scores, saveScores, settings })
       const parsed = parseJSON(resp);
       if (typeof parsed.score !== "number") throw new Error("Invalid response");
 
+      // Success — now safe to clear and record
+      setSubmitted(userSentence);
+      setSentence("");
       setResult(parsed);
       setSessionScore(s => s + parsed.score);
       setCount(c => c + 1);
@@ -136,7 +138,8 @@ export default function WordChallenge({ setPage, scores, saveScores, settings })
       });
       setPhase("feedback");
     } catch (e) {
-      setError("Scoring failed — progress not saved. Please try again.");
+      // Failure — sentence stays in the box, button re-enables, user can retry
+      setError("Scoring failed — the AI may be busy. Your sentence is still here, please try again.");
     } finally {
       setLoading(false);
     }
